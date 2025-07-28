@@ -3,6 +3,7 @@
 
 This directory contains comprehensive runbooks for various failure scenarios in the HiringDog Django application.
 
+
 ## 📋 Available Runbooks
 
 ### Application Level
@@ -20,13 +21,6 @@ This directory contains comprehensive runbooks for various failure scenarios in 
 ### Monitoring & Alerts
 - [Monitoring Setup](./monitoring-setup.md)
 - [Alert Response Procedures](./alert-response.md)
-
-## 🚨 Emergency Contacts
-
-- **Primary On-Call**: [Add contact]
-- **Secondary On-Call**: [Add contact]
-- **System Administrator**: [Add contact]
-
 
 ## 🔧 Quick Commands
 
