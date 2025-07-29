@@ -1,12 +1,5 @@
 # Django Application Failures Runbook
 
-## 🚨 Severity Levels
-
-- **Critical**: Application completely down, no responses
-- **High**: Major functionality broken, affecting users
-- **Medium**: Minor functionality issues, workarounds available
-- **Low**: Cosmetic issues, no user impact
-
 ## 🔍 Initial Assessment
 
 ### 1. Check Application Status
@@ -23,40 +16,42 @@ lsof -i :8000
 curl -I http://localhost:8000/
 curl -I http://localhost:8000/admin
 curl -I https://prod-api.hdiplatform.in/
+curl -I https://api.hdiplatform.in/
 ```
 
 ### 2. Check Logs
 ```bash
-# Django application logs
-sudo journalctl -u gunicorn -f --since "10 minutes ago"
-tail -f /var/log/hiringdog/gunicorn.log
+# Gunicorn application logs
+sudo journalctl -u gunicorn -f
+sudo tail -f /var/log/hiringdog/gunicorn_error.log
+sudo tail -f /var/log/hiringdog/gunicorn.log
 
 # Error logs
-tail -f /var/log/hiringdog/error.log
-grep -i error /var/log/hiringdog/gunicorn.log | tail -20
+sudo tail -f /var/log/hiringdog/app_error.log
+sudo tail -f /var/log/hiringdog/errors.log
 ```
 
 ## 🛠️ Common Failure Scenarios
 
-### Scenario 1: Django Process Not Starting
+### Scenario 1: Gunicorn Process Not Starting
 
 **Symptoms:**
-- `systemctl status hiringdog-django` shows failed
+- `sudo systemctl status gunicorn` shows failed
 - Port 8000 not listening
 - Application not responding
 
 **Diagnosis:**
 ```bash
 # Check systemd service status
-sudo systemctl status hiringdog-django
+sudo systemctl status gunicorn --no-pager
 
 # Check service logs
-sudo journalctl -u hiringdog-django -n 50
+sudo journalctl -u gunicorn --no-pager -n 50
 
 # Test manual startup
-cd /path/to/hiringdog-backend
+cd /home/ubuntu/Hiringdog-backend
 source venv/bin/activate
-python manage.py runserver 0.0.0.0:8000
+gunicorn --bind 0.0.0.0:8000 hiringdogbackend.wsgi:application
 ```
 
 **Resolution:**
@@ -67,9 +62,11 @@ sudo systemctl restart gunicorn
 # If still failing, check configuration
 sudo systemctl daemon-reload
 sudo systemctl enable gunicorn
-sudo systemctl restart hiringdog-django
+sudo systemctl restart gunicorn
 
 # Check for missing dependencies
+cd /home/ubuntu/Hiringdog-backend
+source venv/bin/activate
 pip install -r requirements.txt
 ```
 
@@ -77,33 +74,32 @@ pip install -r requirements.txt
 
 **Symptoms:**
 - 500 errors on database-dependent endpoints
-- Django logs show database connection errors
+- Application logs show database connection errors
 - `OperationalError: (2006, 'MySQL server has gone away')`
 
 **Diagnosis:**
 ```bash
 # Test database connection
+cd /home/ubuntu/Hiringdog-backend
+source venv/bin/activate
 python manage.py dbshell
 python manage.py check --database default
 
-# Check database server status
+# Check database server status (GCP Cloud SQL)
 sudo systemctl status mysql
-sudo systemctl status postgresql
 ```
 
 **Resolution:**
 ```bash
 # Restart database service
 sudo systemctl restart mysql
-# or
-sudo systemctl restart postgresql
 
 # Check Django database settings
 python manage.py check --deploy
 
 # Verify database migrations
-python manage.py showmigrations
 python manage.py migrate --plan
+python manage.py migrate --noinput
 ```
 
 ### Scenario 3: Memory/Resource Exhaustion
@@ -123,6 +119,7 @@ htop
 
 # Check Django process memory usage
 ps aux | grep gunicorn
+ps aux --sort=-%mem | head -10
 ```
 
 **Resolution:**
@@ -150,18 +147,20 @@ sudo systemctl restart gunicorn
 **Diagnosis:**
 ```bash
 # Check Python environment
+cd /home/ubuntu/Hiringdog-backend
 which python
 python --version
 pip list
 
 # Test imports
-python -c "import django; print(django.get_version())"
-python -c "import pymysql; print('MySQL OK')"
+python manage.py check
 ```
 
 **Resolution:**
 ```bash
 # Reinstall dependencies
+cd /home/ubuntu/Hiringdog-backend
+source venv/bin/activate
 pip install -r requirements.txt --force-reinstall
 
 # Check virtual environment
