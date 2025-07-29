@@ -1,3 +1,4 @@
+
 # Django Application Failures Runbook
 
 ## 🔍 Initial Assessment
@@ -184,17 +185,6 @@ grep -r "Exception" /var/log/hiringdog/
 grep -r "Traceback" /var/log/hiringdog/
 ```
 
-### Performance Issues
-```bash
-# Check slow queries
-python manage.py dbshell
-# In MySQL: SHOW PROCESSLIST;
-# In PostgreSQL: SELECT * FROM pg_stat_activity;
-
-# Check Django debug toolbar (if enabled)
-# Look for slow queries in browser
-```
-
 ### Static Files Issues
 ```bash
 # Collect static files
@@ -205,26 +195,11 @@ ls -la /path/to/static/files/
 chmod -R 755 /path/to/static/files/
 ```
 
-## 📊 Monitoring Commands
-
-```bash
-# Health check script
-#!/bin/bash
-response=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/)
-if [ $response -eq 200 ]; then
-    echo "gunicorn is healthy"
-else
-    echo "gunicorn is unhealthy: $response"
-    # Send alert
-fi
-```
-
 ## 🚨 Escalation
 
 ### When to Escalate:
 - Application down for >15 minutes
 - Database corruption suspected
-- Security breach indicators
 - Multiple services affected
 
 ### Escalation Steps:
@@ -244,8 +219,3 @@ fi
 - [Database Failures](./database-failures.md)
 - [Celery Failures](./celery-failures.md)
 - [Server Resources](./server-resources.md)
-
----
-
-*Last Updated: [Date]*
-*Maintained by: [Team Name]*
