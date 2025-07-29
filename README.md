@@ -34,9 +34,8 @@ sudo systemctl status nginx
 # View logs
 sudo journalctl -u gunicorn -f
 sudo journalctl -u celery -f
-sudo tail -f /var/log/gunicorn/error.log
-sudo tail -f /var/log/celery/error.log
-sudo tail -f /var/log/nginx/error.log
+sudo tail -f /var/log/hiringdog/gunicorn_error.log
+sudo tail -f /var/log/nginx/hiringdogbackend_error.log
 
 # Database connection test
 python manage.py dbshell
