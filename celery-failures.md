@@ -1,42 +1,37 @@
 # Celery Task Failures Runbook
 
-## 🚨 Severity Levels
-
-- **Critical**: All Celery workers down, no task processing
-- **High**: Major task queues failing, affecting core functionality
-- **Medium**: Some tasks failing, partial functionality affected
-- **Low**: Minor task delays, no user impact
-
 ## 🔍 Initial Assessment
 
 ### 1. Check Celery Services Status
 ```bash
 # Check Celery worker status
-sudo systemctl status hiringdog-celery
-sudo systemctl status hiringdog-celerybeat
+sudo systemctl status celery
+sudo systemctl status celery-beat
 
 # Check Celery processes
 ps aux | grep celery
 ps aux | grep -E "(celery|beat)"
 
 # Check if Celery is connected to broker
+cd /home/ubuntu/Hiringdog-backend
+source venv/bin/activate
+celery -A hiringdogbackend inspect ping
 celery -A hiringdogbackend inspect active
-celery -A hiringdogbackend inspect stats
 ```
 
 ### 2. Check Celery Logs
 ```bash
 # Celery worker logs
-sudo journalctl -u hiringdog-celery -f --since "10 minutes ago"
-tail -f /var/log/hiringdog/celery.log
+sudo journalctl -u celery -f
+sudo tail -f /var/log/hiringdog/celery.log
 
 # Celery beat logs
-sudo journalctl -u hiringdog-celerybeat -f --since "10 minutes ago"
-tail -f /var/log/hiringdog/celerybeat.log
+sudo journalctl -u celery-beat -f
+sudo tail -f /var/log/hiringdog/celery_beat.log
 
 # Check for errors
-grep -i error /var/log/hiringdog/celery.log | tail -20
-grep -i "task.*failed" /var/log/hiringdog/celery.log
+sudo grep -i "error\|exception\|traceback" /var/log/hiringdog/celery.log | tail -20
+sudo grep -i "error\|exception\|traceback" /var/log/hiringdog/celery_beat.log | tail -20
 ```
 
 ### 3. Check Redis/RabbitMQ Status
@@ -44,7 +39,9 @@ grep -i "task.*failed" /var/log/hiringdog/celery.log
 # Redis status
 sudo systemctl status redis
 redis-cli ping
-redis-cli info
+redis-cli info server
+redis-cli info memory
+redis-cli keys "*celery*"
 
 # RabbitMQ status
 sudo systemctl status rabbitmq-server
@@ -64,13 +61,13 @@ rabbitmqctl list_queues
 **Diagnosis:**
 ```bash
 # Check systemd service status
-sudo systemctl status hiringdog-celery
+sudo systemctl status celery
 
 # Check service logs
-sudo journalctl -u hiringdog-celery -n 50
+sudo journalctl -u celery -n 50
 
 # Test manual startup
-cd /path/to/hiringdog-backend
+cd /home/ubuntu/Hiringdog-backend
 source venv/bin/activate
 celery -A hiringdogbackend worker --loglevel=info
 ```
@@ -78,21 +75,23 @@ celery -A hiringdogbackend worker --loglevel=info
 **Resolution:**
 ```bash
 # Restart Celery service
-sudo systemctl restart hiringdog-celery
+sudo systemctl restart celery
 
 # If still failing, check configuration
 sudo systemctl daemon-reload
-sudo systemctl enable hiringdog-celery
-sudo systemctl restart hiringdog-celery
+sudo systemctl enable celery
+sudo systemctl restart celery
 
 # Check broker connection
+cd /home/ubuntu/Hiringdog-backend
+source venv/bin/activate
 celery -A hiringdogbackend inspect ping
 ```
 
-### Scenario 2: Broker Connection Issues
+### Scenario 2: Redis Connection Issues
 
 **Symptoms:**
-- Celery workers disconnected from broker
+- Celery workers disconnected from Redis
 - Tasks stuck in queue
 - Connection timeout errors
 
@@ -102,25 +101,31 @@ celery -A hiringdogbackend inspect ping
 redis-cli ping
 redis-cli info server
 
-# Check RabbitMQ connection
-rabbitmqctl status
-rabbitmqctl list_connections
+# Check Redis memory
+redis-cli info memory
 
 # Test Celery broker connection
+cd /home/ubuntu/Hiringdog-backend
+source venv/bin/activate
 celery -A hiringdogbackend inspect ping
 ```
 
 **Resolution:**
 ```bash
-# Restart broker service
+# Restart Redis service
 sudo systemctl restart redis
-# or
-sudo systemctl restart rabbitmq-server
 
 # Restart Celery workers
-sudo systemctl restart hiringdog-celery
+sudo systemctl restart celery
+
+sudo systemctl restart rabbitmq-server
+
+# Check Redis configuration
+sudo cat /etc/redis/redis.conf | grep -E "(maxmemory|timeout)"
 
 # Check broker configuration in Django settings
+cd /home/ubuntu/Hiringdog-backend
+source venv/bin/activate
 python manage.py shell -c "from django.conf import settings; print(settings.CELERY_BROKER_URL)"
 ```
 
@@ -134,6 +139,8 @@ python manage.py shell -c "from django.conf import settings; print(settings.CELE
 **Diagnosis:**
 ```bash
 # Check failed tasks
+cd /home/ubuntu/Hiringdog-backend
+source venv/bin/activate
 celery -A hiringdogbackend inspect failed
 
 # Check task statistics
@@ -141,18 +148,31 @@ celery -A hiringdogbackend inspect stats
 
 # Monitor task execution
 celery -A hiringdogbackend events
+
+# Check recent task failures
+sudo grep -i "failed\|error" /var/log/hiringdog/celery.log | tail -20
 ```
 
 **Resolution:**
 ```bash
 # Purge failed tasks (if safe)
+cd /home/ubuntu/Hiringdog-backend
+source venv/bin/activate
 celery -A hiringdogbackend purge
 
 # Restart workers to clear stuck tasks
-sudo systemctl restart hiringdog-celery
+sudo systemctl restart celery
 
 # Check task code for errors
-python manage.py shell -c "from dashboard.tasks import trigger_interview_processing; print('Task import OK')"
+cd /home/ubuntu/Hiringdog-backend
+source venv/bin/activate
+python manage.py shell -c "
+from django_celery_results.models import TaskResult
+failed_tasks = TaskResult.objects.filter(status='FAILURE')
+print(f'Failed tasks: {failed_tasks.count()}')
+for task in failed_tasks[:5]:
+    print(f'{task.task_id}: {task.result}')
+"
 ```
 
 ### Scenario 4: Celery Beat Scheduler Issues
@@ -165,27 +185,34 @@ python manage.py shell -c "from dashboard.tasks import trigger_interview_process
 **Diagnosis:**
 ```bash
 # Check Celery beat status
-sudo systemctl status hiringdog-celerybeat
+sudo systemctl status celery-beat
 
 # Check beat logs
-sudo journalctl -u hiringdog-celerybeat -n 50
+sudo journalctl -u celery-beat -n 50
 
 # Check scheduled tasks
+cd /home/ubuntu/Hiringdog-backend
+source venv/bin/activate
 celery -A hiringdogbackend inspect scheduled
 ```
 
 **Resolution:**
 ```bash
 # Restart Celery beat
-sudo systemctl restart hiringdog-celerybeat
+sudo systemctl restart celery-beat
 
 # Check beat configuration
-python manage.py shell -c "from hiringdogbackend.celery import app; print(app.conf.beat_schedule)"
+cd /home/ubuntu/Hiringdog-backend
+source venv/bin/activate
+python manage.py shell -c "
+from hiringdogbackend.celery import app
+print('Beat schedule:', app.conf.beat_schedule)
+"
 
 # Clear beat schedule and restart
-sudo systemctl stop hiringdog-celerybeat
-rm -f /var/lib/celery/beat-schedule
-sudo systemctl start hiringdog-celerybeat
+sudo systemctl stop celery-beat
+sudo rm -f /var/lib/celery/beat-schedule
+sudo systemctl start celery-beat
 ```
 
 ### Scenario 5: Memory/Resource Issues
@@ -206,13 +233,15 @@ htop
 ps aux | grep celery | grep -v grep
 
 # Monitor Celery performance
+cd /home/ubuntu/Hiringdog-backend
+source venv/bin/activate
 celery -A hiringdogbackend inspect stats
 ```
 
 **Resolution:**
 ```bash
 # Restart workers to free memory
-sudo systemctl restart hiringdog-celery
+sudo systemctl restart celery
 
 # Adjust worker concurrency
 # Edit systemd service file to add: --concurrency=2
@@ -223,7 +252,7 @@ sudo nano /etc/systemd/system/hiringdog-celery.service
 
 # Reload and restart
 sudo systemctl daemon-reload
-sudo systemctl restart hiringdog-celery
+sudo systemctl restart celery
 ```
 
 ## 🔧 Advanced Troubleshooting
@@ -244,6 +273,8 @@ print(f'Task ID: {result.id}')
 ### Monitor Task Queues
 ```bash
 # Check queue status
+cd /home/ubuntu/Hiringdog-backend
+source venv/bin/activate
 celery -A hiringdogbackend inspect active_queues
 
 # Monitor queue lengths
@@ -253,87 +284,49 @@ celery -A hiringdogbackend inspect stats | grep -A 5 "queues"
 celery -A hiringdogbackend inspect active
 ```
 
-### Database Connection Issues in Tasks
-```bash
-# Test database connection in task context
-python manage.py shell -c "
-from django.db import connection
-cursor = connection.cursor()
-cursor.execute('SELECT 1')
-print('Database connection OK')
-"
-```
-
-## 📊 Monitoring Commands
-
-```bash
-# Health check script
-#!/bin/bash
-# Check Celery workers
-worker_status=$(celery -A hiringdogbackend inspect ping 2>/dev/null | grep -c "pong")
-if [ $worker_status -gt 0 ]; then
-    echo "Celery workers are healthy"
-else
-    echo "Celery workers are down"
-    # Send alert
-fi
-
-# Check task queue
-queue_length=$(celery -A hiringdogbackend inspect stats 2>/dev/null | grep -o '"length": [0-9]*' | head -1 | grep -o '[0-9]*')
-if [ "$queue_length" -gt 100 ]; then
-    echo "Task queue is backing up: $queue_length tasks"
-    # Send alert
-fi
-```
-
 ## 🚨 Emergency Procedures
 
 ### Quick Recovery
 ```bash
 # Emergency restart all Celery services
-sudo systemctl restart hiringdog-celery
-sudo systemctl restart hiringdog-celerybeat
+sudo systemctl restart celery
+sudo systemctl restart celery-beat
 sudo systemctl restart redis
 
 # Check if services are running
-sudo systemctl status hiringdog-celery hiringdog-celerybeat redis
+sudo systemctl status celery celery-beat redis
+```
+### Complete Service Reset
+```bash
+# Stop all Celery services
+sudo systemctl stop celery celery-beat
+sudo pkill -f celery
+
+# Wait a moment
+sleep 10
+
+# Start services in order
+sudo systemctl start redis
+sleep 5
+sudo systemctl start celery
+sleep 5
+sudo systemctl start celery-beat
+
+# Check status
+sudo systemctl status celery celery-beat redis
 ```
 
 ### Fallback Task Processing
 ```bash
 # Run tasks synchronously if needed
+cd /home/ubuntu/Hiringdog-backend
+source venv/bin/activate
 python manage.py shell -c "
 from dashboard.tasks import trigger_interview_processing
-trigger_interview_processing()  # Run synchronously
+result = trigger_interview_processing()  # Run synchronously
+print('Task completed synchronously')
 "
 ```
-
-## 📝 Configuration Best Practices
-
-### Worker Configuration
-```python
-# In celery.py
-app.conf.update(
-    worker_prefetch_multiplier=1,
-    task_acks_late=True,
-    worker_max_tasks_per_child=1000,
-    task_time_limit=3600,
-    task_soft_time_limit=3000,
-)
-```
-
-### Task Retry Configuration
-```python
-# In task definitions
-@shared_task(bind=True, max_retries=3, default_retry_delay=60)
-def my_task(self):
-    try:
-        # Task logic
-        pass
-    except Exception as exc:
-        self.retry(exc=exc)
-```
-
 ## 🚨 Escalation
 
 ### When to Escalate:
@@ -345,8 +338,7 @@ def my_task(self):
 ### Escalation Steps:
 1. Notify on-call engineer
 2. Update incident status
-3. Contact senior engineer if unresolved in 20 minutes
-4. Contact system administrator if unresolved in 40 minutes
+3. Contact administrator if unresolved in 40 minutes
 
 ## 📝 Post-Incident Actions
 
@@ -357,11 +349,7 @@ def my_task(self):
 
 ## 🔗 Related Runbooks
 
-- [Django Failures](./django-failures.md)
+- [Gunicorn Failures](./gunicorn-failures.md)
 - [Database Failures](./database-failures.md)
 - [Server Resources](./server-resources.md)
 
----
-
-*Last Updated: [Date]*
-*Maintained by: [Team Name]*
