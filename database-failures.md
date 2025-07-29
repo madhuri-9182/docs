@@ -1,96 +1,71 @@
 # Database Failures Runbook
 
-## 🚨 Severity Levels
+## 📌 Overview
 
-- **Critical**: Database completely down, no connections possible
-- **High**: Major performance issues, affecting user experience
-- **Medium**: Slow queries, some functionality affected
-- **Low**: Minor performance degradation
+This runbook covers monitoring alerts and incident resolution procedures for Google Cloud SQL, including:
+- High CPU utilization
+- High memory usage
+- Instance unavailability or downtime
 
-## 🔍 Initial Assessment
+## 🔍 Symptoms
 
-### 1. Check Database Service Status
-```bash
-# Check MySQL status
-sudo systemctl status mysql
-sudo systemctl status mariadb
+- Alert received via Stackdriver / Monitoring:
+  - `Cloud SQL CPU utilization > 85%`
+  - `Cloud SQL memory usage > 90%`
+  - `Cloud SQL instance not responding`
+- Application logs showing database connection failures
+- 5xx errors in API/Frontend logs due to database issues
 
-# Check PostgreSQL status
-sudo systemctl status postgresql
+## 🧪 Diagnosis
 
-# Check database processes
-ps aux | grep mysql
-ps aux | grep postgres
-```
+### Check Database Service Status
 
-### 2. Check Database Connectivity
-```bash
-# Test MySQL connection
-mysql -u root -p -e "SELECT 1;"
-mysql -u hiringdog_user -p -e "SELECT 1;"
+Steps:
 
-# Test PostgreSQL connection
-sudo -u postgres psql -c "SELECT 1;"
-psql -h localhost -U hiringdog_user -d hiringdog_db -c "SELECT 1;"
+1. Go to GCP Console → SQL
+2. Click on your instance name
+Review:
+  - Instance status (RUNNING / STOPPED / ERROR)
+  - Connection count
+  - CPU/Memory usage
 
-# Test Django database connection
-python manage.py dbshell
-python manage.py check --database default
-```
+### **Check Monitoring Dashboards**
+1. Go to **GCP Console → Monitoring → Metrics Explorer**
+2. In the resource dropdown, select: `Cloud SQL Database`
+3. Set filters:
+   - **Instance ID**
+4. View metrics:
+   - CPU utilization
+   - Memory usage
+   - Disk usage
+   - Active connections
 
-### 3. Check Database Logs
-```bash
-# MySQL logs
-sudo tail -f /var/log/mysql/error.log
-sudo tail -f /var/log/mysql/mysql.log
-
-# PostgreSQL logs
-sudo tail -f /var/log/postgresql/postgresql-*.log
-
-# Check for recent errors
-sudo grep -i error /var/log/mysql/error.log | tail -20
-```
+### **Check Cloud SQL Logs**
+- GCP → Logging → Filter by `resource.type="cloudsql_database"`
+- Look for:
+  - `Out of memory (OOM) errors` `Connection failures` `too many connections` `Restart` events
+ 
+### **Connectivity Check**
+- Run the following from a GCE instance:
+  ```bash
+  nc -zv [INSTANCE_IP] 3306
+  ```
 
 ## 🛠️ Common Failure Scenarios
 
 ### Scenario 1: Database Service Not Starting
 
 **Symptoms:**
-- `systemctl status mysql` shows failed
+- `cloud mysql` shows failed
 - Cannot connect to database
-- Django shows database connection errors
-
-**Diagnosis:**
-```bash
-# Check systemd service status
-sudo systemctl status mysql
-
-# Check service logs
-sudo journalctl -u mysql -n 50
-
-# Check for port conflicts
-sudo netstat -tlnp | grep :3306
-sudo netstat -tlnp | grep :5432
-
-# Check disk space
-df -h
-```
+- Application shows database connection errors
 
 **Resolution:**
-```bash
-# Restart database service
-sudo systemctl restart mysql
-# or
-sudo systemctl restart postgresql
+Resolution Steps:
+- Check instance logs via Logging
+- Restart instance
+- If misconfiguration is suspected, clone from backup or failover to replica
 
-# If still failing, check configuration
-sudo systemctl daemon-reload
-sudo systemctl enable mysql
-sudo systemctl restart mysql
-
-# Check for corrupted data files
-sudo mysqlcheck -u root -p --all-databases
-```
 
 ### Scenario 2: Connection Limit Exceeded
 
@@ -99,27 +74,10 @@ sudo mysqlcheck -u root -p --all-databases
 - Slow response times
 - Connection timeouts
 
-**Diagnosis:**
-```bash
-# Check current connections
-mysql -u root -p -e "SHOW PROCESSLIST;"
-mysql -u root -p -e "SHOW STATUS LIKE 'Threads_connected';"
-
-# Check max connections
-mysql -u root -p -e "SHOW VARIABLES LIKE 'max_connections';"
-```
-
 **Resolution:**
-```bash
-# Kill idle connections
-mysql -u root -p -e "KILL QUERY [connection_id];"
-
-# Increase max connections temporarily
-mysql -u root -p -e "SET GLOBAL max_connections = 200;"
-
-# Restart application to clear connection pool
-sudo systemctl restart hiringdog-django
-```
+- Go to SQL → Instance → Connections
+    - Increase connection limit in DB flags: For MySQL: `max_connections`
+    - Kill idle or long-running connections:
 
 ### Scenario 3: Database Corruption
 
@@ -128,31 +86,10 @@ sudo systemctl restart hiringdog-django
 - "Table is marked as crashed" errors
 - Data integrity issues
 
-**Diagnosis:**
-```bash
-# Check for table corruption
-mysqlcheck -u root -p --all-databases --check
-
-# Check specific database
-mysqlcheck -u root -p hiringdog_db --check
-
-# Check for errors in logs
-sudo grep -i "corrupt\|crash" /var/log/mysql/error.log
-```
-
 **Resolution:**
-```bash
-# Repair corrupted tables
-mysqlcheck -u root -p --all-databases --repair
-
-# Repair specific database
-mysqlcheck -u root -p hiringdog_db --repair
-
-# If severe corruption, restore from backup
-sudo systemctl stop hiringdog-django
-# Restore from latest backup
-sudo systemctl start hiringdog-django
-```
+- Restore from last known good backup
+- GCP Console → SQL → Backups → Restore
+- Check for auto-backup status and retention settings
 
 ### Scenario 4: Performance Issues
 
@@ -161,31 +98,12 @@ sudo systemctl start hiringdog-django
 - High CPU usage by database
 - Timeout errors
 
-**Diagnosis:**
-```bash
-# Check slow queries
-mysql -u root -p -e "SHOW PROCESSLIST;"
-mysql -u root -p -e "SELECT * FROM mysql.slow_log ORDER BY start_time DESC LIMIT 10;"
-
-# Check database performance
-mysql -u root -p -e "SHOW STATUS LIKE 'Slow_queries';"
-mysql -u root -p -e "SHOW STATUS LIKE 'Questions';"
-
-# Check table sizes
-mysql -u root -p -e "SELECT table_name, ROUND(((data_length + index_length) / 1024 / 1024), 2) AS 'Size (MB)' FROM information_schema.tables WHERE table_schema = 'hiringdog_db' ORDER BY (data_length + index_length) DESC;"
-```
-
 **Resolution:**
-```bash
-# Optimize tables
-mysql -u root -p -e "OPTIMIZE TABLE hiringdog_db.table_name;"
+GCP Console → SQL → Insights (if enabled)
+- Check slow queries
+- Optimize queries, add indexes
+- Consider upgrading machine type
 
-# Analyze table statistics
-mysql -u root -p -e "ANALYZE TABLE hiringdog_db.table_name;"
-
-# Check and update indexes
-mysql -u root -p -e "SHOW INDEX FROM hiringdog_db.table_name;"
-```
 
 ### Scenario 5: Disk Space Issues
 
@@ -194,149 +112,33 @@ mysql -u root -p -e "SHOW INDEX FROM hiringdog_db.table_name;"
 - Database cannot write data
 - Slow performance due to disk I/O
 
-**Diagnosis:**
-```bash
-# Check disk space
-df -h
-df -i
-
-# Check database size
-mysql -u root -p -e "SELECT table_schema AS 'Database', ROUND(SUM(data_length + index_length) / 1024 / 1024, 2) AS 'Size (MB)' FROM information_schema.tables GROUP BY table_schema;"
-
-# Check log file sizes
-ls -lh /var/log/mysql/
-```
-
 **Resolution:**
-```bash
-# Clean up old log files
-sudo find /var/log/mysql -name "*.log.*" -mtime +7 -delete
-
-# Rotate logs
-sudo logrotate -f /etc/logrotate.d/mysql
-
-# If critical, free up space immediately
-sudo systemctl stop hiringdog-django
-# Clean up temporary files
-sudo systemctl start hiringdog-django
-```
+GCP Console → SQL → Edit → Increase storage size (manual or enable auto storage increase)
+- Enable auto-growth in Settings → Storage
+- Cleanup unused data/logs from DB
 
 ## 🔧 Advanced Troubleshooting
 
 ### Debug Database Queries
-```bash
-# Enable query logging
-mysql -u root -p -e "SET GLOBAL general_log = 'ON';"
-mysql -u root -p -e "SET GLOBAL log_output = 'TABLE';"
+Enable and use Cloud SQL Insights for slow query analysis.
 
-# Monitor queries in real-time
-mysql -u root -p -e "SELECT * FROM mysql.general_log ORDER BY event_time DESC LIMIT 20;"
-```
+### Check Django application Database Settings
+Ensure DATABASES config is optimized for pooling and retries.
 
-### Check Django Database Settings
-```bash
-# Test Django database configuration
-python manage.py check --deploy
-
-# Check database migrations
-python manage.py showmigrations
-python manage.py migrate --plan
-
-# Test database connection from Django
-python manage.py shell -c "
-from django.db import connection
-cursor = connection.cursor()
-cursor.execute('SELECT 1')
-print('Database connection OK')
-"
-```
-
-### Monitor Database Performance
-```bash
-# Real-time monitoring script
-#!/bin/bash
-while true; do
-    connections=$(mysql -u root -p -e "SHOW STATUS LIKE 'Threads_connected';" | tail -1 | awk '{print $2}')
-    slow_queries=$(mysql -u root -p -e "SHOW STATUS LIKE 'Slow_queries';" | tail -1 | awk '{print $2}')
-    echo "$(date): Connections: $connections, Slow queries: $slow_queries"
-    sleep 30
-done
-```
-
-## 📊 Monitoring Commands
-
-```bash
-# Health check script
-#!/bin/bash
-# Test database connection
-if mysql -u hiringdog_user -p -e "SELECT 1;" >/dev/null 2>&1; then
-    echo "Database is healthy"
-else
-    echo "Database connection failed"
-    # Send alert
-fi
 
 # Check database size
-db_size=$(mysql -u root -p -e "SELECT ROUND(SUM(data_length + index_length) / 1024 / 1024, 2) AS 'Size (MB)' FROM information_schema.tables WHERE table_schema = 'hiringdog_db';" | tail -1)
-echo "Database size: ${db_size}MB"
+``` sql
+SELECT table_schema "DB Name", SUM(data_length + index_length)/1024/1024 "Size (MB)"
+FROM information_schema.tables GROUP BY table_schema;
 ```
 
 ## 🚨 Emergency Procedures
 
 ### Quick Recovery
-```bash
-# Emergency restart database
-sudo systemctl stop mysql
-sudo systemctl start mysql
-
-# Check if database is accessible
-mysql -u root -p -e "SELECT 1;"
-
-# Restart Django application
-sudo systemctl restart hiringdog-django
-```
+GCP Console → SQL → Instance → Backups → "Create Backup"
 
 ### Backup and Restore
-```bash
-# Create emergency backup
-mysqldump -u root -p --all-databases > /tmp/emergency_backup_$(date +%Y%m%d_%H%M%S).sql
-
-# Restore from backup
-mysql -u root -p < /path/to/backup.sql
-```
-
-## 📝 Configuration Best Practices
-
-### MySQL Configuration
-```ini
-# In /etc/mysql/mysql.conf.d/mysqld.cnf
-[mysqld]
-max_connections = 200
-innodb_buffer_pool_size = 1G
-innodb_log_file_size = 256M
-slow_query_log = 1
-long_query_time = 2
-```
-
-### Django Database Settings
-```python
-# In settings.py
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.mysql',
-        'NAME': 'hiringdog_db',
-        'USER': 'hiringdog_user',
-        'PASSWORD': 'secure_password',
-        'HOST': 'localhost',
-        'PORT': '3306',
-        'OPTIONS': {
-            'init_command': "SET sql_mode='STRICT_TRANS_TABLES'",
-            'charset': 'utf8mb4',
-        },
-        'CONN_MAX_AGE': 60,
-    }
-}
-```
+SQL → Backups → Select a backup → Click Restore
 
 ## 🚨 Escalation
 
@@ -345,12 +147,6 @@ DATABASES = {
 - Data corruption suspected
 - Performance issues affecting users
 - Backup/restore required
-
-### Escalation Steps:
-1. Notify on-call engineer
-2. Update incident status
-3. Contact senior engineer if unresolved in 30 minutes
-4. Contact database administrator if unresolved in 60 minutes
 
 ## 📝 Post-Incident Actions
 
@@ -361,11 +157,7 @@ DATABASES = {
 
 ## 🔗 Related Runbooks
 
-- [Django Failures](./django-failures.md)
+- [Gunicorn Failures](./gunicorn-failures.md)
 - [Celery Failures](./celery-failures.md)
 - [Server Resources](./server-resources.md)
 
----
-
-*Last Updated: [Date]*
-*Maintained by: [Team Name]*
