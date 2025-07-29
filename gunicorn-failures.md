@@ -15,8 +15,7 @@ lsof -i :8000
 
 # Test application response
 curl -I http://localhost:8000/
-curl -I http://localhost:8000/admin
-curl -I https://prod-api.hdiplatform.in/
+curl -I https://prod-api.hdiplatform.in/ 
 curl -I https://api.hdiplatform.in/
 ```
 
@@ -71,39 +70,7 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### Scenario 2: Database Connection Issues
-
-**Symptoms:**
-- 500 errors on database-dependent endpoints
-- Application logs show database connection errors
-- `OperationalError: (2006, 'MySQL server has gone away')`
-
-**Diagnosis:**
-```bash
-# Test database connection
-cd /home/ubuntu/Hiringdog-backend
-source venv/bin/activate
-python manage.py dbshell
-python manage.py check --database default
-
-# Check database server status (GCP Cloud SQL)
-sudo systemctl status mysql
-```
-
-**Resolution:**
-```bash
-# Restart database service
-sudo systemctl restart mysql
-
-# Check Django database settings
-python manage.py check --deploy
-
-# Verify database migrations
-python manage.py migrate --plan
-python manage.py migrate --noinput
-```
-
-### Scenario 3: Memory/Resource Exhaustion
+### Scenario 2: Memory/Resource Exhaustion
 
 **Symptoms:**
 - Slow response times
@@ -138,7 +105,7 @@ sudo systemctl daemon-reload
 sudo systemctl restart gunicorn
 ```
 
-### Scenario 4: Import/Module Errors
+### Scenario 3: Import/Module Errors
 
 **Symptoms:**
 - ImportError in logs
@@ -202,11 +169,6 @@ chmod -R 755 /path/to/static/files/
 - Database corruption suspected
 - Multiple services affected
 
-### Escalation Steps:
-1. Notify on-slack to engineer
-2. Update incident status
-3. Contact system administrator if unresolved in 60 minutes
-
 ## 📝 Post-Incident Actions
 
 1. **Document the incident** in incident log
@@ -218,4 +180,3 @@ chmod -R 755 /path/to/static/files/
 
 - [Database Failures](./database-failures.md)
 - [Celery Failures](./celery-failures.md)
-- [Server Resources](./server-resources.md)
